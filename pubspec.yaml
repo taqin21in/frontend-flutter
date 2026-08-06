@@ -1,0 +1,23 @@
+name: sewa_mobil_app
+description: Aplikasi frontend Flutter untuk layanan sewa mobil.
+publish_to: "none"
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.4.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  equatable: ^2.0.5
+  flutter_bloc: ^8.1.6
+  http: ^1.2.2
+  intl: ^0.19.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+
+flutter:
+  uses-material-design: true
