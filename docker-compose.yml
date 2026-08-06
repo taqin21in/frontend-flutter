@@ -1,0 +1,12 @@
+services:
+
+  flutter-web:
+
+    image: host.docker.internal:8082/docker-hosted/flutter-web:1.0
+
+    container_name: flutter_web
+
+    ports:
+      - "80:80"
+
+    restart: unless-stopped
