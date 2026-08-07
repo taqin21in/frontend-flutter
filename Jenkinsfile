@@ -23,13 +23,17 @@ pipeline {
             }
         }
 
-        stage('Pub Get') {
+        stage('Pub curl') {
             steps {
-                bat 'curl https://pub.dev',
-                bat 'flutter pub get'
+                bat 'curl https://pub.dev'
             }
         }
 
+        stage('Pub Get') {
+            steps {
+                bat 'flutter pub get'
+            }
+        }
         stage('Analyze') {
             steps {
                 bat 'flutter analyze'
