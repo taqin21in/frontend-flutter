@@ -7,6 +7,6 @@ services:
     container_name: flutter_web
 
     ports:
-      - "80:80"
+      - "8088:80"
 
     restart: unless-stopped
