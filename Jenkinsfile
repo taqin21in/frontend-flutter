@@ -25,6 +25,7 @@ pipeline {
 
         stage('Pub Get') {
             steps {
+                bat 'curl https://pub.dev',
                 bat 'flutter pub get'
             }
         }
