@@ -1,4 +1,6 @@
-FROM nginx:1.27-alpine
+FROM nginx:1.29.6-alpine3.23-slim
+
+RUN apk upgrade --no-cache
 
 RUN rm -rf /usr/share/nginx/html/*
 
