@@ -16,11 +16,13 @@
  *   ↓
  * Quality Gate
  *   ↓
- * Version SNAPSHOT / RELEASE
+ * Read Version from pubspec.yaml
+ *   ↓
+ * SNAPSHOT / RELEASE
  *   ↓
  * Flutter Web Build
  *   ↓
- * Docker Build
+ * Docker Build + Push
  *   ↓
  * Nexus Docker Hosted
  *   ↓
@@ -49,16 +51,7 @@ def gitBranch = 'main'
 // ============================================================
 
 def flutterHome = '/opt/flutter'
-
-def sonarScannerHome = '/opt/sonar-scanner'
-
-
-// ============================================================
-// SONARQUBE
-// ============================================================
-
-def sonarProjectKey  = 'frontend-flutter'
-def sonarProjectName = 'frontend-flutter'
+def sonarHome   = '/opt/sonar-scanner'
 
 
 // ============================================================
@@ -87,8 +80,10 @@ def k3sKubeconfig =
 // VARIABLES
 // ============================================================
 
-def dockerImage
+def flutterVersion
 def appVersion
+def buildNumber
+def dockerImage
 def buildType
 
 def deploymentStarted = false
@@ -121,7 +116,7 @@ node('runner') {
                 ],
 
                 description:
-                    'Pilih SNAPSHOT untuk development atau RELEASE untuk production.'
+                    'SNAPSHOT = development, RELEASE = production'
             )
         ])
     ])
@@ -143,12 +138,12 @@ node('runner') {
                 credentialsId: 'github-credential'
             )
 
-            echo "Git checkout completed."
+            echo 'Git checkout completed.'
         }
 
 
         // ====================================================
-        // 02 - ENVIRONMENT CHECK
+        // 02 - ENVIRONMENT
         // ====================================================
 
         stage('Environment Check') {
@@ -157,24 +152,20 @@ node('runner') {
                 set -e
 
                 echo "========================================"
-                echo "Environment Check"
+                echo "Environment"
                 echo "========================================"
-
 
                 echo ""
                 echo "Flutter:"
                 /opt/flutter/bin/flutter --version
 
-
                 echo ""
                 echo "SonarScanner:"
                 /opt/sonar-scanner/bin/sonar-scanner --version
 
-
                 echo ""
                 echo "Docker:"
                 docker --version
-
 
                 echo ""
                 echo "Kubectl:"
@@ -198,7 +189,7 @@ node('runner') {
 
 
         // ====================================================
-        // 04 - FLUTTER PUB GET
+        // 04 - PUB GET
         // ====================================================
 
         stage('Flutter Pub Get') {
@@ -212,7 +203,7 @@ node('runner') {
 
 
         // ====================================================
-        // 05 - FLUTTER ANALYZE
+        // 05 - ANALYZE
         // ====================================================
 
         stage('Flutter Analyze') {
@@ -230,7 +221,7 @@ node('runner') {
 
 
         // ====================================================
-        // 06 - FLUTTER TEST
+        // 06 - TEST
         // ====================================================
 
         stage('Flutter Test') {
@@ -262,7 +253,6 @@ node('runner') {
                     echo "SonarQube Analysis"
                     echo "========================================"
 
-
                     /opt/sonar-scanner/bin/sonar-scanner \
                         -Dsonar.projectKey=frontend-flutter \
                         -Dsonar.projectName=frontend-flutter \
@@ -290,7 +280,6 @@ node('runner') {
                         abortPipeline: true
                     )
 
-
                 if (result.status != 'OK') {
 
                     error(
@@ -298,23 +287,24 @@ node('runner') {
                     )
                 }
 
-
-                echo "Quality Gate PASSED."
+                echo 'Quality Gate PASSED.'
             }
         }
 
 
         // ====================================================
-        // 09 - VERSION
+        // 09 - VERSION FROM PUBSPEC
         // ====================================================
 
         stage('Version') {
 
-            buildType =
-                params.BUILD_TYPE
+            /*
+             * Read:
+             *
+             * version: 1.0.0+1
+             */
 
-
-            def flutterVersion = sh(
+            flutterVersion = sh(
 
                 script: '''
                     grep '^version:' pubspec.yaml |
@@ -336,18 +326,32 @@ node('runner') {
 
 
             /*
-             * Contoh pubspec:
+             * Pisahkan:
              *
-             * version: 1.0.0+1
+             * 1.0.0+1
              *
-             * Ambil:
+             * menjadi:
              *
              * 1.0.0
+             * 1
              */
 
-            def baseVersion =
-                flutterVersion
-                    .split('\\+')[0]
+            def versionParts =
+                flutterVersion.split('\\+')
+
+
+            appVersion =
+                versionParts[0]
+
+
+            buildNumber =
+                versionParts.size() > 1
+                    ? versionParts[1]
+                    : '0'
+
+
+            buildType =
+                params.BUILD_TYPE
 
 
             // =================================================
@@ -356,32 +360,8 @@ node('runner') {
 
             if (buildType == 'SNAPSHOT') {
 
-                appVersion =
-                    "${baseVersion}-SNAPSHOT"
-
                 dockerImage =
-                    "${dockerImageName}:${baseVersion}-SNAPSHOT-build-${env.BUILD_NUMBER}"
-
-
-                echo """
-                ========================================
-                SNAPSHOT BUILD
-                ========================================
-
-                Flutter Version:
-                ${flutterVersion}
-
-                Application Version:
-                ${appVersion}
-
-                Docker Image:
-                ${dockerImage}
-
-                Jenkins Build:
-                ${env.BUILD_NUMBER}
-
-                ========================================
-                """
+                    "${dockerImageName}:${appVersion}-SNAPSHOT-build-${env.BUILD_NUMBER}"
             }
 
 
@@ -391,43 +371,41 @@ node('runner') {
 
             else {
 
-                appVersion =
-                    getNextReleaseVersion(
-                        nexusRegistry,
-                        dockerImageName,
-                        baseVersion
-                    )
-
-
                 dockerImage =
                     "${dockerImageName}:${appVersion}"
-
-
-                echo """
-                ========================================
-                RELEASE BUILD
-                ========================================
-
-                Flutter Version:
-                ${flutterVersion}
-
-                Previous Version:
-                ${baseVersion}
-
-                Release Version:
-                ${appVersion}
-
-                Docker Image:
-                ${dockerImage}
-
-                ========================================
-                """
             }
+
+
+            echo """
+========================================
+APPLICATION VERSION
+========================================
+
+pubspec.yaml:
+${flutterVersion}
+
+App Version:
+${appVersion}
+
+Flutter Build Number:
+${buildNumber}
+
+Build Type:
+${buildType}
+
+Docker Image:
+${dockerImage}
+
+Jenkins Build:
+${env.BUILD_NUMBER}
+
+========================================
+"""
         }
 
 
         // ====================================================
-        // 10 - FLUTTER WEB PREPARE
+        // 10 - FLUTTER WEB
         // ====================================================
 
         stage('Flutter Web Prepare') {
@@ -439,28 +417,24 @@ node('runner') {
                 echo "Flutter Web Prepare"
                 echo "========================================"
 
-
                 if [ ! -d "web" ]; then
 
-                    echo "Flutter Web belum dikonfigurasi."
+                    echo "Web directory belum ada."
 
                     /opt/flutter/bin/flutter create . \
                         --platforms web
 
                 else
 
-                    echo "Flutter Web sudah tersedia."
+                    echo "Web directory sudah tersedia."
 
                 fi
-
-
-                ls -lah web/
             '''
         }
 
 
         // ====================================================
-        // 11 - FLUTTER WEB BUILD
+        // 11 - BUILD WEB
         // ====================================================
 
         stage('Flutter Web Build') {
@@ -472,7 +446,8 @@ node('runner') {
                 echo "Flutter Web Build"
                 echo "========================================"
 
-                /opt/flutter/bin/flutter build web --release
+                /opt/flutter/bin/flutter build web \
+                    --release
 
 
                 echo ""
@@ -484,7 +459,7 @@ node('runner') {
 
 
         // ====================================================
-        // 12 - DOCKER BUILD & PUSH
+        // 12 - DOCKER BUILD + PUSH
         // ====================================================
 
         stage('Docker Build & Push') {
@@ -528,7 +503,7 @@ node('runner') {
 
 
                         echo ""
-                        echo "Docker Build:"
+                        echo "Docker Build"
 
 
                         docker build \
@@ -538,14 +513,14 @@ node('runner') {
 
 
                         echo ""
-                        echo "Docker Push:"
+                        echo "Docker Push"
 
 
                         docker push "$DOCKER_IMAGE"
 
 
                         echo ""
-                        echo "Image pushed:"
+                        echo "Image:"
                         echo "$DOCKER_IMAGE"
                     '''
                 }
@@ -582,7 +557,6 @@ node('runner') {
                     echo "========================================"
                     echo "K3s Deployment"
                     echo "========================================"
-
 
                     echo "Namespace : $NAMESPACE"
                     echo "Deployment: $DEPLOYMENT"
@@ -663,33 +637,42 @@ node('runner') {
 
         echo """
 
-        ========================================
-        PIPELINE SUCCESS
-        ========================================
+========================================
+PIPELINE SUCCESS
+========================================
 
-        Application:
-        Flutter Web
+Application:
+Flutter Web
 
-        Build Type:
-        ${buildType}
+Build Type:
+${buildType}
 
-        Application Version:
-        ${appVersion}
+Flutter Version:
+${flutterVersion}
 
-        Docker Image:
-        ${dockerImage}
+Application Version:
+${appVersion}
 
-        Nexus:
-        ${nexusRegistry}
+Flutter Build Number:
+${buildNumber}
 
-        K3s:
-        ${k3sNamespace}/${k3sDeployment}
+Docker Image:
+${dockerImage}
 
-        Jenkins Build:
-        ${env.BUILD_NUMBER}
+Nexus:
+${nexusRegistry}
 
-        ========================================
-        """
+K3s Namespace:
+${k3sNamespace}
+
+K3s Deployment:
+${k3sDeployment}
+
+Jenkins Build:
+${env.BUILD_NUMBER}
+
+========================================
+"""
 
 
     } catch (Exception e) {
@@ -777,132 +760,5 @@ node('runner') {
         // ====================================================
 
         deleteDir()
-    }
-}
-
-
-// ============================================================
-// GET NEXT RELEASE VERSION
-// ============================================================
-
-def getNextReleaseVersion(
-    nexusRegistry,
-    dockerImageName,
-    baseVersion
-) {
-
-    def repository =
-        "http://${nexusRegistry}/v2/docker-hosted/flutter-web/tags/list"
-
-
-    withCredentials([
-
-        usernamePassword(
-
-            credentialsId:
-                'nexus-credential',
-
-            usernameVariable:
-                'NEXUS_USERNAME',
-
-            passwordVariable:
-                'NEXUS_PASSWORD'
-        )
-
-    ]) {
-
-        def tags = sh(
-
-            script: """
-
-                curl -fsS \
-                    -u "\$NEXUS_USERNAME:\$NEXUS_PASSWORD" \
-                    "${repository}" \
-                    2>/dev/null \
-                    || echo '{}'
-
-            """,
-
-            returnStdout: true
-
-        ).trim()
-
-
-        def versions = []
-
-
-        /*
-         * Cari Docker release:
-         *
-         * 1.0.0
-         * 1.0.1
-         * 1.0.2
-         *
-         * Tidak mengambil:
-         *
-         * 1.0.0-SNAPSHOT-build-1
-         */
-
-        def matcher =
-            tags =~ /"([0-9]+\.[0-9]+\.[0-9]+)"/
-
-
-        matcher.each {
-
-            def version =
-                it[1]
-
-
-            if (
-                version ==~ /^\d+\.\d+\.\d+$/
-            ) {
-
-                versions << version
-            }
-        }
-
-
-        if (versions.isEmpty()) {
-
-            return baseVersion
-        }
-
-
-        def maxVersion =
-            versions.max { a, b ->
-
-                def pa =
-                    a.tokenize('.').collect {
-                        it as Integer
-                    }
-
-
-                def pb =
-                    b.tokenize('.').collect {
-                        it as Integer
-                    }
-
-
-                pa <=> pb
-            }
-
-
-        def parts =
-            maxVersion.tokenize('.').collect {
-                it as Integer
-            }
-
-
-        /*
-         * Jika:
-         *
-         * 1.0.0
-         *
-         * maka:
-         *
-         * 1.0.1
-         */
-
-        return "${parts[0]}.${parts[1]}.${parts[2] + 1}"
     }
 }
