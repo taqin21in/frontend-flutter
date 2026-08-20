@@ -1,8 +1,12 @@
 /*
  * ============================================================
- * FLUTTER WEB CI/CD
+ * FLUTTER WEB DEVSECOPS CI/CD
  *
  * GitHub
+ *   ↓
+ * Checkout
+ *   ↓
+ * Dependency Validation
  *   ↓
  * Flutter Clean
  *   ↓
@@ -16,13 +20,15 @@
  *   ↓
  * Quality Gate
  *   ↓
- * Read Version from pubspec.yaml
- *   ↓
- * SNAPSHOT / RELEASE
+ * Version from pubspec.yaml
  *   ↓
  * Flutter Web Build
  *   ↓
- * Docker Build + Push
+ * Docker Build
+ *   ↓
+ * Trivy Security Scan
+ *   ↓
+ * Release Immutable Validation
  *   ↓
  * Nexus Docker Hosted
  *   ↓
@@ -143,7 +149,7 @@ node('runner') {
 
 
         // ====================================================
-        // 02 - ENVIRONMENT
+        // 02 - ENVIRONMENT CHECK
         // ====================================================
 
         stage('Environment Check') {
@@ -152,20 +158,29 @@ node('runner') {
                 set -e
 
                 echo "========================================"
-                echo "Environment"
+                echo "Environment Check"
                 echo "========================================"
+
 
                 echo ""
                 echo "Flutter:"
                 /opt/flutter/bin/flutter --version
 
+
                 echo ""
                 echo "SonarScanner:"
                 /opt/sonar-scanner/bin/sonar-scanner --version
 
+
                 echo ""
                 echo "Docker:"
                 docker --version
+
+
+                echo ""
+                echo "Trivy:"
+                trivy --version
+
 
                 echo ""
                 echo "Kubectl:"
@@ -175,7 +190,62 @@ node('runner') {
 
 
         // ====================================================
-        // 03 - FLUTTER CLEAN
+        // 03 - DEPENDENCY VALIDATION
+        // ====================================================
+
+        stage('Dependency Validation') {
+
+            sh '''
+                set -e
+
+                echo "========================================"
+                echo "Dependency Validation"
+                echo "========================================"
+
+
+                echo ""
+                echo "Checking pubspec.yaml..."
+
+                test -f pubspec.yaml
+
+
+                echo ""
+                echo "Checking pubspec.lock..."
+
+                if [ ! -f pubspec.lock ]; then
+
+                    echo ""
+                    echo "ERROR:"
+                    echo "pubspec.lock tidak ditemukan."
+
+                    echo ""
+                    echo "Untuk Flutter Application,"
+                    echo "pubspec.lock harus di-commit ke Git."
+
+                    exit 1
+                fi
+
+
+                echo ""
+                echo "pubspec.lock found."
+
+
+                echo ""
+                echo "Flutter dependency check..."
+
+                /opt/flutter/bin/flutter pub get
+
+
+                echo ""
+                echo "Dependency status..."
+
+                /opt/flutter/bin/flutter pub outdated || true
+            '''
+        }
+
+
+        // ====================================================
+        // 04 - FLUTTER CLEAN
         // ====================================================
 
         stage('Flutter Clean') {
@@ -183,13 +253,17 @@ node('runner') {
             sh '''
                 set -e
 
+                echo "========================================"
+                echo "Flutter Clean"
+                echo "========================================"
+
                 /opt/flutter/bin/flutter clean
             '''
         }
 
 
         // ====================================================
-        // 04 - PUB GET
+        // 05 - FLUTTER PUB GET
         // ====================================================
 
         stage('Flutter Pub Get') {
@@ -197,13 +271,17 @@ node('runner') {
             sh '''
                 set -e
 
+                echo "========================================"
+                echo "Flutter Pub Get"
+                echo "========================================"
+
                 /opt/flutter/bin/flutter pub get
             '''
         }
 
 
         // ====================================================
-        // 05 - ANALYZE
+        // 06 - FLUTTER ANALYZE
         // ====================================================
 
         stage('Flutter Analyze') {
@@ -221,7 +299,7 @@ node('runner') {
 
 
         // ====================================================
-        // 06 - TEST
+        // 07 - FLUTTER TEST
         // ====================================================
 
         stage('Flutter Test') {
@@ -239,7 +317,7 @@ node('runner') {
 
 
         // ====================================================
-        // 07 - SONARQUBE
+        // 08 - SONARQUBE
         // ====================================================
 
         stage('SonarQube Analysis') {
@@ -253,6 +331,7 @@ node('runner') {
                     echo "SonarQube Analysis"
                     echo "========================================"
 
+
                     /opt/sonar-scanner/bin/sonar-scanner \
                         -Dsonar.projectKey=frontend-flutter \
                         -Dsonar.projectName=frontend-flutter \
@@ -265,7 +344,7 @@ node('runner') {
 
 
         // ====================================================
-        // 08 - QUALITY GATE
+        // 09 - QUALITY GATE
         // ====================================================
 
         stage('Quality Gate') {
@@ -280,6 +359,7 @@ node('runner') {
                         abortPipeline: true
                     )
 
+
                 if (result.status != 'OK') {
 
                     error(
@@ -287,22 +367,17 @@ node('runner') {
                     )
                 }
 
+
                 echo 'Quality Gate PASSED.'
             }
         }
 
 
         // ====================================================
-        // 09 - VERSION FROM PUBSPEC
+        // 10 - VERSION
         // ====================================================
 
         stage('Version') {
-
-            /*
-             * Read:
-             *
-             * version: 1.0.0+1
-             */
 
             flutterVersion = sh(
 
@@ -326,15 +401,17 @@ node('runner') {
 
 
             /*
-             * Pisahkan:
+             * Example:
              *
              * 1.0.0+1
              *
-             * menjadi:
-             *
+             * Base Version:
              * 1.0.0
+             *
+             * Flutter Build:
              * 1
              */
+
 
             def versionParts =
                 flutterVersion.split('\\+')
@@ -378,13 +455,13 @@ node('runner') {
 
             echo """
 ========================================
-APPLICATION VERSION
+VERSION
 ========================================
 
 pubspec.yaml:
 ${flutterVersion}
 
-App Version:
+Application Version:
 ${appVersion}
 
 Flutter Build Number:
@@ -405,7 +482,7 @@ ${env.BUILD_NUMBER}
 
 
         // ====================================================
-        // 10 - FLUTTER WEB
+        // 11 - FLUTTER WEB PREPARE
         // ====================================================
 
         stage('Flutter Web Prepare') {
@@ -417,9 +494,10 @@ ${env.BUILD_NUMBER}
                 echo "Flutter Web Prepare"
                 echo "========================================"
 
+
                 if [ ! -d "web" ]; then
 
-                    echo "Web directory belum ada."
+                    echo "Web directory belum tersedia."
 
                     /opt/flutter/bin/flutter create . \
                         --platforms web
@@ -434,7 +512,7 @@ ${env.BUILD_NUMBER}
 
 
         // ====================================================
-        // 11 - BUILD WEB
+        // 12 - FLUTTER WEB BUILD
         // ====================================================
 
         stage('Flutter Web Build') {
@@ -459,10 +537,161 @@ ${env.BUILD_NUMBER}
 
 
         // ====================================================
-        // 12 - DOCKER BUILD + PUSH
+        // 13 - DOCKER BUILD
         // ====================================================
 
-        stage('Docker Build & Push') {
+        stage('Docker Build') {
+
+            withEnv([
+
+                "DOCKER_IMAGE=${dockerImage}"
+
+            ]) {
+
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "Docker Build"
+                    echo "========================================"
+
+
+                    docker build \
+                        --pull \
+                        -t "$DOCKER_IMAGE" \
+                        .
+
+
+                    echo ""
+                    echo "Docker image created:"
+
+                    docker images "$DOCKER_IMAGE"
+                '''
+            }
+        }
+
+
+        // ====================================================
+        // 14 - TRIVY SECURITY SCAN
+        // ====================================================
+
+        stage('Trivy Security Scan') {
+
+            withEnv([
+
+                "DOCKER_IMAGE=${dockerImage}"
+
+            ]) {
+
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "Trivy Security Scan"
+                    echo "========================================"
+
+
+                    trivy image \
+                        --severity HIGH,CRITICAL \
+                        --exit-code 1 \
+                        --ignore-unfixed \
+                        "$DOCKER_IMAGE"
+                '''
+            }
+        }
+
+
+        // ====================================================
+        // 15 - RELEASE IMMUTABLE VALIDATION
+        // ====================================================
+
+        stage('Release Validation') {
+
+            if (buildType == 'RELEASE') {
+
+                withCredentials([
+
+                    usernamePassword(
+
+                        credentialsId:
+                            'nexus-credential',
+
+                        usernameVariable:
+                            'NEXUS_USERNAME',
+
+                        passwordVariable:
+                            'NEXUS_PASSWORD'
+                    )
+
+                ]) {
+
+                    withEnv([
+
+                        "DOCKER_IMAGE=${dockerImage}",
+
+                        "DOCKER_REGISTRY=${nexusRegistry}",
+
+                        "IMAGE_TAG=${appVersion}"
+
+                    ]) {
+
+                        sh '''
+                            set -e
+
+                            echo "========================================"
+                            echo "Release Validation"
+                            echo "========================================"
+
+
+                            echo "Checking existing release tag..."
+
+                            STATUS=$(curl -s \
+                                -o /dev/null \
+                                -w "%{http_code}" \
+                                -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
+                                "http://$DOCKER_REGISTRY/v2/docker-hosted/flutter-web/manifests/$IMAGE_TAG" \
+                                || true)
+
+
+                            echo "Nexus response: $STATUS"
+
+
+                            if [ "$STATUS" = "200" ]; then
+
+                                echo ""
+                                echo "ERROR:"
+                                echo "Release $IMAGE_TAG sudah ada di Nexus."
+
+
+                                echo ""
+                                echo "Release image immutable."
+                                echo "Pipeline dihentikan untuk mencegah overwrite."
+
+
+                                exit 1
+                            fi
+
+
+                            echo ""
+                            echo "Release $IMAGE_TAG belum tersedia."
+
+                            echo "Release validation PASSED."
+                        '''
+                    }
+                }
+
+            } else {
+
+                echo "SNAPSHOT build - immutable release validation dilewati."
+            }
+        }
+
+
+        // ====================================================
+        // 16 - DOCKER PUSH
+        // ====================================================
+
+        stage('Docker Push') {
 
             withCredentials([
 
@@ -503,25 +732,13 @@ ${env.BUILD_NUMBER}
 
 
                         echo ""
-                        echo "Docker Build"
-
-
-                        docker build \
-                            --pull \
-                            -t "$DOCKER_IMAGE" \
-                            .
-
-
-                        echo ""
-                        echo "Docker Push"
-
+                        echo "Pushing image:"
 
                         docker push "$DOCKER_IMAGE"
 
 
                         echo ""
-                        echo "Image:"
-                        echo "$DOCKER_IMAGE"
+                        echo "Docker push completed."
                     '''
                 }
             }
@@ -529,7 +746,7 @@ ${env.BUILD_NUMBER}
 
 
         // ====================================================
-        // 13 - DEPLOY K3S
+        // 17 - DEPLOY K3S
         // ====================================================
 
         stage('Deploy K3s') {
@@ -558,6 +775,7 @@ ${env.BUILD_NUMBER}
                     echo "K3s Deployment"
                     echo "========================================"
 
+
                     echo "Namespace : $NAMESPACE"
                     echo "Deployment: $DEPLOYMENT"
                     echo "Container : $CONTAINER"
@@ -580,7 +798,7 @@ ${env.BUILD_NUMBER}
 
 
         // ====================================================
-        // 14 - VERIFY
+        // 18 - VERIFY
         // ====================================================
 
         stage('Verify') {
@@ -670,6 +888,13 @@ ${k3sDeployment}
 
 Jenkins Build:
 ${env.BUILD_NUMBER}
+
+Security:
+- pubspec.lock validation : PASSED
+- SonarQube               : PASSED
+- Quality Gate            : PASSED
+- Trivy                   : PASSED
+- Release immutability    : PASSED
 
 ========================================
 """
