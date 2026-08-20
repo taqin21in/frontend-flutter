@@ -11,7 +11,7 @@ class ApiClient {
     http.Client? httpClient,
     this.baseUrl = const String.fromEnvironment(
       'API_BASE_URL',
-      defaultValue: 'http://localhost:8080/api',
+      defaultValue: 'https://backend.k3s.local/api',
     ),
   }) : _httpClient = httpClient ?? http.Client();
 
