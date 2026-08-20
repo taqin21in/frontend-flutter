@@ -4,7 +4,9 @@
  *
  * GitHub
  *   ↓
- * Flutter Clean + Pub Get
+ * Flutter Clean
+ *   ↓
+ * Flutter Pub Get
  *   ↓
  * Flutter Analyze
  *   ↓
@@ -13,6 +15,8 @@
  * SonarQube Analysis
  *   ↓
  * Quality Gate
+ *   ↓
+ * Flutter Web Prepare
  *   ↓
  * Flutter Web Build
  *   ↓
@@ -41,12 +45,20 @@ def gitBranch = 'main'
 
 
 // ============================================================
-// TOOLS
+// FLUTTER
 // ============================================================
 
 def flutterHome = '/opt/flutter'
 
+
+// ============================================================
+// SONARQUBE
+// ============================================================
+
 def sonarScannerHome = '/opt/sonar-scanner'
+
+def sonarProjectKey  = 'frontend-flutter'
+def sonarProjectName = 'frontend-flutter'
 
 
 // ============================================================
@@ -69,14 +81,6 @@ def k3sContainer  = 'flutter-web'
 
 def k3sKubeconfig =
     '/home/jenkins/k3s-jenkins.yaml'
-
-
-// ============================================================
-// SONARQUBE
-// ============================================================
-
-def sonarProjectKey  = 'frontend-flutter'
-def sonarProjectName = 'frontend-flutter'
 
 
 // ============================================================
@@ -138,25 +142,36 @@ node('runner') {
                 echo "Environment Check"
                 echo "========================================"
 
+
                 echo ""
                 echo "Flutter:"
+                echo "----------------------------------------"
+
                 test -x /opt/flutter/bin/flutter
+
                 /opt/flutter/bin/flutter --version
 
 
                 echo ""
                 echo "SonarScanner:"
+                echo "----------------------------------------"
+
                 test -x /opt/sonar-scanner/bin/sonar-scanner
+
                 /opt/sonar-scanner/bin/sonar-scanner --version
 
 
                 echo ""
                 echo "Docker:"
+                echo "----------------------------------------"
+
                 docker --version
 
 
                 echo ""
                 echo "Kubectl:"
+                echo "----------------------------------------"
+
                 kubectl version --client
             '''
         }
@@ -249,10 +264,13 @@ node('runner') {
                     echo "SonarQube Analysis"
                     echo "========================================"
 
+
                     echo "SonarScanner:"
                     /opt/sonar-scanner/bin/sonar-scanner --version
 
+
                     echo ""
+
 
                     /opt/sonar-scanner/bin/sonar-scanner \
                         -Dsonar.projectKey=frontend-flutter \
@@ -272,14 +290,20 @@ node('runner') {
         stage('Quality Gate') {
 
             timeout(
+
                 time: 10,
+
                 unit: 'MINUTES'
+
             ) {
 
                 def result =
                     waitForQualityGate(
                         abortPipeline: true
                     )
+
+
+                echo "SonarQube Quality Gate: ${result.status}"
 
 
                 if (result.status != 'OK') {
@@ -290,9 +314,7 @@ node('runner') {
                 }
 
 
-                echo "========================================"
-                echo "SonarQube Quality Gate PASSED"
-                echo "========================================"
+                echo "Quality Gate PASSED."
             }
         }
 
@@ -327,11 +349,11 @@ node('runner') {
             /*
              * Example:
              *
-             * version: 1.0.0+5
+             * version: 1.0.0+1
              *
              * Docker:
              *
-             * 1.0.0-build-25
+             * 1.0.0-build-10
              */
 
             def baseVersion =
@@ -353,7 +375,50 @@ node('runner') {
 
 
         // ====================================================
-        // 10 - FLUTTER WEB BUILD
+        // 10 - FLUTTER WEB PREPARE
+        // ====================================================
+
+        stage('Flutter Web Prepare') {
+
+            sh '''
+                set -e
+
+                echo "========================================"
+                echo "Flutter Web Prepare"
+                echo "========================================"
+
+
+                if [ ! -d "web" ]; then
+
+                    echo "Flutter Web belum dikonfigurasi."
+
+                    echo ""
+                    echo "Creating Flutter Web platform..."
+
+
+                    /opt/flutter/bin/flutter create . \
+                        --platforms web
+
+
+                    echo ""
+                    echo "Flutter Web berhasil dibuat."
+
+                else
+
+                    echo "Flutter Web sudah tersedia."
+
+                fi
+
+
+                echo ""
+                echo "Web directory:"
+                ls -lah web/
+            '''
+        }
+
+
+        // ====================================================
+        // 11 - FLUTTER WEB BUILD
         // ====================================================
 
         stage('Flutter Web Build') {
@@ -365,20 +430,20 @@ node('runner') {
                 echo "Flutter Web Build"
                 echo "========================================"
 
+
                 /opt/flutter/bin/flutter build web --release
 
 
                 echo ""
 
                 echo "Build output:"
-
                 ls -lah build/web
             '''
         }
 
 
         // ====================================================
-        // 11 - DOCKER BUILD & PUSH
+        // 12 - DOCKER BUILD & PUSH
         // ====================================================
 
         stage('Docker Build & Push') {
@@ -447,7 +512,6 @@ node('runner') {
                         echo ""
 
                         echo "Image pushed:"
-
                         echo "$DOCKER_IMAGE"
                     '''
                 }
@@ -456,7 +520,7 @@ node('runner') {
 
 
         // ====================================================
-        // 12 - DEPLOY K3S
+        // 13 - DEPLOY K3S
         // ====================================================
 
         stage('Deploy K3s') {
@@ -493,14 +557,13 @@ node('runner') {
 
 
                     echo ""
-
                     echo "K3s Nodes:"
+
 
                     kubectl get nodes -o wide
 
 
                     echo ""
-
                     echo "Updating deployment..."
 
 
@@ -511,7 +574,6 @@ node('runner') {
 
 
                     echo ""
-
                     echo "Waiting rollout..."
 
 
@@ -525,7 +587,7 @@ node('runner') {
 
 
         // ====================================================
-        // 13 - VERIFY
+        // 14 - VERIFY
         // ====================================================
 
         stage('Verify') {
@@ -548,34 +610,28 @@ node('runner') {
                     echo "========================================"
 
 
+                    echo ""
                     echo "Deployment:"
-
                     kubectl get deployment \
                         "$DEPLOYMENT" \
                         -n "$NAMESPACE"
 
 
                     echo ""
-
                     echo "Pods:"
-
                     kubectl get pods \
                         -n "$NAMESPACE" \
                         -o wide
 
 
                     echo ""
-
                     echo "Service:"
-
                     kubectl get service \
                         -n "$NAMESPACE"
 
 
                     echo ""
-
                     echo "Ingress:"
-
                     kubectl get ingress \
                         -n "$NAMESPACE" \
                         || true
@@ -687,10 +743,8 @@ node('runner') {
         if (dockerImage) {
 
             sh """
-
                 docker image rm \
                     '${dockerImage}' || true
-
             """
         }
 
