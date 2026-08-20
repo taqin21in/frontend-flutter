@@ -12,11 +12,11 @@
  *   ↓
  * Flutter Test
  *   ↓
- * SonarQube Analysis
+ * SonarQube
  *   ↓
  * Quality Gate
  *   ↓
- * Flutter Web Prepare
+ * Version SNAPSHOT / RELEASE
  *   ↓
  * Flutter Web Build
  *   ↓
@@ -28,7 +28,7 @@
  *   ↓
  * Verify
  *   ↓
- * Rollback on Failure
+ * Rollback
  *
  * Repository:
  * https://github.com/taqin21in/frontend-flutter.git
@@ -45,17 +45,17 @@ def gitBranch = 'main'
 
 
 // ============================================================
-// FLUTTER
+// TOOLS
 // ============================================================
 
 def flutterHome = '/opt/flutter'
+
+def sonarScannerHome = '/opt/sonar-scanner'
 
 
 // ============================================================
 // SONARQUBE
 // ============================================================
-
-def sonarScannerHome = '/opt/sonar-scanner'
 
 def sonarProjectKey  = 'frontend-flutter'
 def sonarProjectName = 'frontend-flutter'
@@ -88,6 +88,9 @@ def k3sKubeconfig =
 // ============================================================
 
 def dockerImage
+def appVersion
+def buildType
+
 def deploymentStarted = false
 
 
@@ -105,7 +108,22 @@ node('runner') {
             logRotator(
                 numToKeepStr: '20'
             )
-        )
+        ),
+
+        parameters([
+
+            choice(
+                name: 'BUILD_TYPE',
+
+                choices: [
+                    'SNAPSHOT',
+                    'RELEASE'
+                ],
+
+                description:
+                    'Pilih SNAPSHOT untuk development atau RELEASE untuk production.'
+            )
+        ])
     ])
 
 
@@ -145,33 +163,21 @@ node('runner') {
 
                 echo ""
                 echo "Flutter:"
-                echo "----------------------------------------"
-
-                test -x /opt/flutter/bin/flutter
-
                 /opt/flutter/bin/flutter --version
 
 
                 echo ""
                 echo "SonarScanner:"
-                echo "----------------------------------------"
-
-                test -x /opt/sonar-scanner/bin/sonar-scanner
-
                 /opt/sonar-scanner/bin/sonar-scanner --version
 
 
                 echo ""
                 echo "Docker:"
-                echo "----------------------------------------"
-
                 docker --version
 
 
                 echo ""
                 echo "Kubectl:"
-                echo "----------------------------------------"
-
                 kubectl version --client
             '''
         }
@@ -186,10 +192,6 @@ node('runner') {
             sh '''
                 set -e
 
-                echo "========================================"
-                echo "Flutter Clean"
-                echo "========================================"
-
                 /opt/flutter/bin/flutter clean
             '''
         }
@@ -203,10 +205,6 @@ node('runner') {
 
             sh '''
                 set -e
-
-                echo "========================================"
-                echo "Flutter Pub Get"
-                echo "========================================"
 
                 /opt/flutter/bin/flutter pub get
             '''
@@ -250,7 +248,7 @@ node('runner') {
 
 
         // ====================================================
-        // 07 - SONARQUBE ANALYSIS
+        // 07 - SONARQUBE
         // ====================================================
 
         stage('SonarQube Analysis') {
@@ -263,13 +261,6 @@ node('runner') {
                     echo "========================================"
                     echo "SonarQube Analysis"
                     echo "========================================"
-
-
-                    echo "SonarScanner:"
-                    /opt/sonar-scanner/bin/sonar-scanner --version
-
-
-                    echo ""
 
 
                     /opt/sonar-scanner/bin/sonar-scanner \
@@ -290,11 +281,8 @@ node('runner') {
         stage('Quality Gate') {
 
             timeout(
-
                 time: 10,
-
                 unit: 'MINUTES'
-
             ) {
 
                 def result =
@@ -303,13 +291,10 @@ node('runner') {
                     )
 
 
-                echo "SonarQube Quality Gate: ${result.status}"
-
-
                 if (result.status != 'OK') {
 
                     error(
-                        "SonarQube Quality Gate FAILED: ${result.status}"
+                        "Quality Gate FAILED: ${result.status}"
                     )
                 }
 
@@ -325,7 +310,11 @@ node('runner') {
 
         stage('Version') {
 
-            def version = sh(
+            buildType =
+                params.BUILD_TYPE
+
+
+            def flutterVersion = sh(
 
                 script: '''
                     grep '^version:' pubspec.yaml |
@@ -338,7 +327,7 @@ node('runner') {
             ).trim()
 
 
-            if (!version) {
+            if (!flutterVersion) {
 
                 error(
                     'Version tidak ditemukan di pubspec.yaml'
@@ -347,30 +336,93 @@ node('runner') {
 
 
             /*
-             * Example:
+             * Contoh pubspec:
              *
              * version: 1.0.0+1
              *
-             * Docker:
+             * Ambil:
              *
-             * 1.0.0-build-10
+             * 1.0.0
              */
 
             def baseVersion =
-                version.split('\\+')[0]
+                flutterVersion
+                    .split('\\+')[0]
 
 
-            dockerImage =
-                "${dockerImageName}:${baseVersion}-build-${env.BUILD_NUMBER}"
+            // =================================================
+            // SNAPSHOT
+            // =================================================
+
+            if (buildType == 'SNAPSHOT') {
+
+                appVersion =
+                    "${baseVersion}-SNAPSHOT"
+
+                dockerImage =
+                    "${dockerImageName}:${baseVersion}-SNAPSHOT-build-${env.BUILD_NUMBER}"
 
 
-            echo "========================================"
-            echo "Application Version"
-            echo "========================================"
+                echo """
+                ========================================
+                SNAPSHOT BUILD
+                ========================================
 
-            echo "Flutter Version : ${version}"
+                Flutter Version:
+                ${flutterVersion}
 
-            echo "Docker Image    : ${dockerImage}"
+                Application Version:
+                ${appVersion}
+
+                Docker Image:
+                ${dockerImage}
+
+                Jenkins Build:
+                ${env.BUILD_NUMBER}
+
+                ========================================
+                """
+            }
+
+
+            // =================================================
+            // RELEASE
+            // =================================================
+
+            else {
+
+                appVersion =
+                    getNextReleaseVersion(
+                        nexusRegistry,
+                        dockerImageName,
+                        baseVersion
+                    )
+
+
+                dockerImage =
+                    "${dockerImageName}:${appVersion}"
+
+
+                echo """
+                ========================================
+                RELEASE BUILD
+                ========================================
+
+                Flutter Version:
+                ${flutterVersion}
+
+                Previous Version:
+                ${baseVersion}
+
+                Release Version:
+                ${appVersion}
+
+                Docker Image:
+                ${dockerImage}
+
+                ========================================
+                """
+            }
         }
 
 
@@ -392,16 +444,8 @@ node('runner') {
 
                     echo "Flutter Web belum dikonfigurasi."
 
-                    echo ""
-                    echo "Creating Flutter Web platform..."
-
-
                     /opt/flutter/bin/flutter create . \
                         --platforms web
-
-
-                    echo ""
-                    echo "Flutter Web berhasil dibuat."
 
                 else
 
@@ -410,8 +454,6 @@ node('runner') {
                 fi
 
 
-                echo ""
-                echo "Web directory:"
                 ls -lah web/
             '''
         }
@@ -430,13 +472,12 @@ node('runner') {
                 echo "Flutter Web Build"
                 echo "========================================"
 
-
                 /opt/flutter/bin/flutter build web --release
 
 
                 echo ""
-
                 echo "Build output:"
+
                 ls -lah build/web
             '''
         }
@@ -487,10 +528,7 @@ node('runner') {
 
 
                         echo ""
-
-                        echo "========================================"
-                        echo "Docker Build"
-                        echo "========================================"
+                        echo "Docker Build:"
 
 
                         docker build \
@@ -500,17 +538,13 @@ node('runner') {
 
 
                         echo ""
-
-                        echo "========================================"
-                        echo "Docker Push"
-                        echo "========================================"
+                        echo "Docker Push:"
 
 
                         docker push "$DOCKER_IMAGE"
 
 
                         echo ""
-
                         echo "Image pushed:"
                         echo "$DOCKER_IMAGE"
                     '''
@@ -556,25 +590,10 @@ node('runner') {
                     echo "Image     : $DOCKER_IMAGE"
 
 
-                    echo ""
-                    echo "K3s Nodes:"
-
-
-                    kubectl get nodes -o wide
-
-
-                    echo ""
-                    echo "Updating deployment..."
-
-
                     kubectl set image \
                         deployment/"$DEPLOYMENT" \
                         "$CONTAINER=$DOCKER_IMAGE" \
                         -n "$NAMESPACE"
-
-
-                    echo ""
-                    echo "Waiting rollout..."
 
 
                     kubectl rollout status \
@@ -610,28 +629,26 @@ node('runner') {
                     echo "========================================"
 
 
-                    echo ""
-                    echo "Deployment:"
                     kubectl get deployment \
                         "$DEPLOYMENT" \
                         -n "$NAMESPACE"
 
 
                     echo ""
-                    echo "Pods:"
+
                     kubectl get pods \
                         -n "$NAMESPACE" \
                         -o wide
 
 
                     echo ""
-                    echo "Service:"
+
                     kubectl get service \
                         -n "$NAMESPACE"
 
 
                     echo ""
-                    echo "Ingress:"
+
                     kubectl get ingress \
                         -n "$NAMESPACE" \
                         || true
@@ -653,8 +670,11 @@ node('runner') {
         Application:
         Flutter Web
 
-        Repository:
-        ${gitRepo}
+        Build Type:
+        ${buildType}
+
+        Application Version:
+        ${appVersion}
 
         Docker Image:
         ${dockerImage}
@@ -662,20 +682,13 @@ node('runner') {
         Nexus:
         ${nexusRegistry}
 
-        SonarQube:
-        ${sonarProjectName}
-
-        K3s Namespace:
-        ${k3sNamespace}
-
-        Deployment:
-        ${k3sDeployment}
+        K3s:
+        ${k3sNamespace}/${k3sDeployment}
 
         Jenkins Build:
         ${env.BUILD_NUMBER}
 
         ========================================
-
         """
 
 
@@ -754,10 +767,8 @@ node('runner') {
         // ====================================================
 
         sh """
-
             docker logout \
                 '${nexusRegistry}' || true
-
         """
 
 
@@ -766,5 +777,132 @@ node('runner') {
         // ====================================================
 
         deleteDir()
+    }
+}
+
+
+// ============================================================
+// GET NEXT RELEASE VERSION
+// ============================================================
+
+def getNextReleaseVersion(
+    nexusRegistry,
+    dockerImageName,
+    baseVersion
+) {
+
+    def repository =
+        "http://${nexusRegistry}/v2/docker-hosted/flutter-web/tags/list"
+
+
+    withCredentials([
+
+        usernamePassword(
+
+            credentialsId:
+                'nexus-credential',
+
+            usernameVariable:
+                'NEXUS_USERNAME',
+
+            passwordVariable:
+                'NEXUS_PASSWORD'
+        )
+
+    ]) {
+
+        def tags = sh(
+
+            script: """
+
+                curl -fsS \
+                    -u "\$NEXUS_USERNAME:\$NEXUS_PASSWORD" \
+                    "${repository}" \
+                    2>/dev/null \
+                    || echo '{}'
+
+            """,
+
+            returnStdout: true
+
+        ).trim()
+
+
+        def versions = []
+
+
+        /*
+         * Cari Docker release:
+         *
+         * 1.0.0
+         * 1.0.1
+         * 1.0.2
+         *
+         * Tidak mengambil:
+         *
+         * 1.0.0-SNAPSHOT-build-1
+         */
+
+        def matcher =
+            tags =~ /"([0-9]+\.[0-9]+\.[0-9]+)"/
+
+
+        matcher.each {
+
+            def version =
+                it[1]
+
+
+            if (
+                version ==~ /^\d+\.\d+\.\d+$/
+            ) {
+
+                versions << version
+            }
+        }
+
+
+        if (versions.isEmpty()) {
+
+            return baseVersion
+        }
+
+
+        def maxVersion =
+            versions.max { a, b ->
+
+                def pa =
+                    a.tokenize('.').collect {
+                        it as Integer
+                    }
+
+
+                def pb =
+                    b.tokenize('.').collect {
+                        it as Integer
+                    }
+
+
+                pa <=> pb
+            }
+
+
+        def parts =
+            maxVersion.tokenize('.').collect {
+                it as Integer
+            }
+
+
+        /*
+         * Jika:
+         *
+         * 1.0.0
+         *
+         * maka:
+         *
+         * 1.0.1
+         */
+
+        return "${parts[0]}.${parts[1]}.${parts[2] + 1}"
     }
 }
