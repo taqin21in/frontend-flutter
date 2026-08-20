@@ -4,15 +4,13 @@
  *
  * GitHub
  *   ↓
- * Flutter Clean
- *   ↓
- * Pub Get
+ * Flutter Clean + Pub Get
  *   ↓
  * Flutter Analyze
  *   ↓
  * Flutter Test
  *   ↓
- * SonarQube
+ * SonarQube Analysis
  *   ↓
  * Quality Gate
  *   ↓
@@ -23,6 +21,8 @@
  * Nexus Docker Hosted
  *   ↓
  * K3s Rolling Deployment
+ *   ↓
+ * Verify
  *   ↓
  * Rollback on Failure
  *
@@ -41,10 +41,12 @@ def gitBranch = 'main'
 
 
 // ============================================================
-// FLUTTER
+// TOOLS
 // ============================================================
 
 def flutterHome = '/opt/flutter'
+
+def sonarScannerHome = '/opt/sonar-scanner'
 
 
 // ============================================================
@@ -65,7 +67,8 @@ def k3sNamespace  = 'frontend'
 def k3sDeployment = 'flutter-web'
 def k3sContainer  = 'flutter-web'
 
-def k3sKubeconfig = '/home/jenkins/k3s-jenkins.yaml'
+def k3sKubeconfig =
+    '/home/jenkins/k3s-jenkins.yaml'
 
 
 // ============================================================
@@ -106,7 +109,9 @@ node('runner') {
 
         "FLUTTER_HOME=${flutterHome}",
 
-        "PATH=${flutterHome}/bin:${env.PATH}"
+        "SONAR_SCANNER_HOME=${sonarScannerHome}",
+
+        "PATH=${flutterHome}/bin:${sonarScannerHome}/bin:${env.PATH}"
 
     ]) {
 
@@ -122,8 +127,11 @@ node('runner') {
                 deleteDir()
 
                 git(
+
                     url: gitRepo,
+
                     branch: gitBranch,
+
                     credentialsId: 'github-credential'
                 )
 
@@ -132,7 +140,35 @@ node('runner') {
 
 
             // ====================================================
-            // 02 - FLUTTER PREPARE
+            // 02 - FLUTTER ENVIRONMENT
+            // ====================================================
+
+            stage('Flutter Environment') {
+
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "Flutter Environment"
+                    echo "========================================"
+
+                    echo "Flutter Home:"
+                    echo "$FLUTTER_HOME"
+
+                    echo ""
+
+                    echo "Flutter Binary:"
+                    which flutter
+
+                    echo ""
+
+                    flutter --version
+                '''
+            }
+
+
+            // ====================================================
+            // 03 - FLUTTER PREPARE
             // ====================================================
 
             stage('Flutter Prepare') {
@@ -140,16 +176,6 @@ node('runner') {
                 sh '''
                     set -e
 
-                    echo "========================================"
-                    echo "Flutter Version"
-                    echo "========================================"
-
-                    which flutter
-
-                    flutter --version
-
-
-                    echo ""
                     echo "========================================"
                     echo "Flutter Clean"
                     echo "========================================"
@@ -168,7 +194,7 @@ node('runner') {
 
 
             // ====================================================
-            // 03 - FLUTTER ANALYZE
+            // 04 - FLUTTER ANALYZE
             // ====================================================
 
             stage('Flutter Analyze') {
@@ -186,7 +212,7 @@ node('runner') {
 
 
             // ====================================================
-            // 04 - FLUTTER TEST
+            // 05 - FLUTTER TEST
             // ====================================================
 
             stage('Flutter Test') {
@@ -204,40 +230,80 @@ node('runner') {
 
 
             // ====================================================
-            // 05 - SONARQUBE ANALYSIS
+            // 06 - SONARSCANNER CHECK
+            // ====================================================
+
+            stage('SonarScanner Check') {
+
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "SonarScanner"
+                    echo "========================================"
+
+                    echo "SonarScanner Home:"
+                    echo "$SONAR_SCANNER_HOME"
+
+                    echo ""
+
+                    echo "SonarScanner Binary:"
+                    which sonar-scanner
+
+                    echo ""
+
+                    sonar-scanner --version
+                '''
+            }
+
+
+            // ====================================================
+            // 07 - SONARQUBE ANALYSIS
             // ====================================================
 
             stage('SonarQube Analysis') {
 
                 withSonarQubeEnv('SonarQube') {
 
-                    sh '''
-                        set -e
+                    withEnv([
 
-                        echo "========================================"
-                        echo "SonarQube Analysis"
-                        echo "========================================"
+                        "SONAR_PROJECT_KEY=${sonarProjectKey}",
 
-                        sonar-scanner \
-                            -Dsonar.projectKey=frontend-flutter \
-                            -Dsonar.projectName=frontend-flutter \
-                            -Dsonar.sources=lib \
-                            -Dsonar.tests=test \
-                            -Dsonar.sourceEncoding=UTF-8
-                    '''
+                        "SONAR_PROJECT_NAME=${sonarProjectName}"
+
+                    ]) {
+
+                        sh '''
+                            set -e
+
+                            echo "========================================"
+                            echo "SonarQube Analysis"
+                            echo "========================================"
+
+                            sonar-scanner \
+                                -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
+                                -Dsonar.projectName="$SONAR_PROJECT_NAME" \
+                                -Dsonar.sources=lib \
+                                -Dsonar.tests=test \
+                                -Dsonar.sourceEncoding=UTF-8
+                        '''
+                    }
                 }
             }
 
 
             // ====================================================
-            // 06 - QUALITY GATE
+            // 08 - QUALITY GATE
             // ====================================================
 
             stage('Quality Gate') {
 
                 timeout(
+
                     time: 10,
+
                     unit: 'MINUTES'
+
                 ) {
 
                     def result =
@@ -254,37 +320,17 @@ node('runner') {
                     }
 
 
+                    echo "========================================"
+
                     echo "SonarQube Quality Gate: PASSED"
+
+                    echo "========================================"
                 }
             }
 
 
             // ====================================================
-            // 07 - FLUTTER WEB BUILD
-            // ====================================================
-
-            stage('Flutter Web Build') {
-
-                sh '''
-                    set -e
-
-                    echo "========================================"
-                    echo "Flutter Web Build"
-                    echo "========================================"
-
-                    flutter build web --release
-
-
-                    echo ""
-                    echo "Build output:"
-
-                    ls -lah build/web
-                '''
-            }
-
-
-            // ====================================================
-            // 08 - VERSION
+            // 09 - VERSION
             // ====================================================
 
             stage('Version') {
@@ -313,8 +359,6 @@ node('runner') {
                 /*
                  * Example:
                  *
-                 * pubspec.yaml
-                 *
                  * version: 1.0.0+5
                  *
                  * Docker:
@@ -331,7 +375,9 @@ node('runner') {
 
 
                 echo "========================================"
-                echo "Version"
+
+                echo "Application Version"
+
                 echo "========================================"
 
                 echo "Flutter Version : ${version}"
@@ -341,7 +387,32 @@ node('runner') {
 
 
             // ====================================================
-            // 09 - DOCKER BUILD & PUSH
+            // 10 - FLUTTER WEB BUILD
+            // ====================================================
+
+            stage('Flutter Web Build') {
+
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "Flutter Web Build"
+                    echo "========================================"
+
+                    flutter build web --release
+
+
+                    echo ""
+
+                    echo "Build output:"
+
+                    ls -lah build/web
+                '''
+            }
+
+
+            // ====================================================
+            // 11 - DOCKER BUILD & PUSH
             // ====================================================
 
             stage('Docker Build & Push') {
@@ -350,7 +421,8 @@ node('runner') {
 
                     usernamePassword(
 
-                        credentialsId: 'nexus-credential',
+                        credentialsId:
+                            'nexus-credential',
 
                         usernameVariable:
                             'NEXUS_USERNAME',
@@ -401,6 +473,7 @@ node('runner') {
 
 
                             echo ""
+
                             echo "Image pushed:"
 
                             echo "$DOCKER_IMAGE"
@@ -411,7 +484,7 @@ node('runner') {
 
 
             // ====================================================
-            // 10 - DEPLOY K3S
+            // 12 - DEPLOY K3S
             // ====================================================
 
             stage('Deploy K3s') {
@@ -450,12 +523,14 @@ node('runner') {
 
 
                         echo ""
+
                         echo "K3s Nodes:"
 
                         kubectl get nodes -o wide
 
 
                         echo ""
+
                         echo "Updating deployment..."
 
 
@@ -466,6 +541,7 @@ node('runner') {
 
 
                         echo ""
+
                         echo "Waiting rollout..."
 
 
@@ -479,7 +555,7 @@ node('runner') {
 
 
             // ====================================================
-            // 11 - VERIFY
+            // 13 - VERIFY
             // ====================================================
 
             stage('Verify') {
@@ -502,6 +578,8 @@ node('runner') {
                         echo "========================================"
 
 
+                        echo "Deployment:"
+
                         kubectl get deployment \
                             "$DEPLOYMENT" \
                             -n "$NAMESPACE"
@@ -509,6 +587,7 @@ node('runner') {
 
                         echo ""
 
+                        echo "Pods:"
 
                         kubectl get pods \
                             -n "$NAMESPACE" \
@@ -517,6 +596,7 @@ node('runner') {
 
                         echo ""
 
+                        echo "Service:"
 
                         kubectl get service \
                             -n "$NAMESPACE"
@@ -524,6 +604,7 @@ node('runner') {
 
                         echo ""
 
+                        echo "Ingress:"
 
                         kubectl get ingress \
                             -n "$NAMESPACE" \
@@ -636,7 +717,10 @@ node('runner') {
             if (dockerImage) {
 
                 sh """
-                    docker image rm '${dockerImage}' || true
+
+                    docker image rm \
+                        '${dockerImage}' || true
+
                 """
             }
 
@@ -646,7 +730,10 @@ node('runner') {
             // ====================================================
 
             sh """
-                docker logout '${nexusRegistry}' || true
+
+                docker logout \
+                    '${nexusRegistry}' || true
+
             """
 
 
