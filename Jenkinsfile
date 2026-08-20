@@ -65,8 +65,7 @@ def k3sNamespace  = 'frontend'
 def k3sDeployment = 'flutter-web'
 def k3sContainer  = 'flutter-web'
 
-def k3sKubeconfig =
-    '/home/jenkins/k3s-jenkins.yaml'
+def k3sKubeconfig = '/home/jenkins/k3s-jenkins.yaml'
 
 
 // ============================================================
