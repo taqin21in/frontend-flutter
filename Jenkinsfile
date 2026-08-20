@@ -1,6 +1,6 @@
 /*
  * ============================================================
- * FLUTTER WEB CI/CD + SONARQUBE
+ * FLUTTER WEB CI/CD
  *
  * GitHub
  *   ↓
@@ -16,7 +16,7 @@
  *   ↓
  * Flutter Web Build
  *   ↓
- * Docker Build + Push
+ * Docker Build
  *   ↓
  * Nexus Docker Hosted
  *   ↓
@@ -105,404 +105,305 @@ node('runner') {
     ])
 
 
-    withEnv([
+    try {
 
-        "FLUTTER_HOME=${flutterHome}",
+        // ====================================================
+        // 01 - CHECKOUT
+        // ====================================================
 
-        "SONAR_SCANNER_HOME=${sonarScannerHome}",
+        stage('Checkout') {
 
-        "PATH=${flutterHome}/bin:${sonarScannerHome}/bin:${env.PATH}"
+            deleteDir()
 
-    ]) {
+            git(
+                url: gitRepo,
+                branch: gitBranch,
+                credentialsId: 'github-credential'
+            )
 
-        try {
-
-
-            // ====================================================
-            // 01 - CHECKOUT
-            // ====================================================
-
-            stage('Checkout') {
-
-                deleteDir()
-
-                git(
-
-                    url: gitRepo,
-
-                    branch: gitBranch,
-
-                    credentialsId: 'github-credential'
-                )
-
-                echo "Git checkout completed."
-            }
+            echo "Git checkout completed."
+        }
 
 
-            // ====================================================
-            // 02 - FLUTTER ENVIRONMENT
-            // ====================================================
+        // ====================================================
+        // 02 - ENVIRONMENT CHECK
+        // ====================================================
 
-            stage('Flutter Environment') {
+        stage('Environment Check') {
+
+            sh '''
+                set -e
+
+                echo "========================================"
+                echo "Environment Check"
+                echo "========================================"
+
+                echo ""
+                echo "Flutter:"
+                test -x /opt/flutter/bin/flutter
+                /opt/flutter/bin/flutter --version
+
+
+                echo ""
+                echo "SonarScanner:"
+                test -x /opt/sonar-scanner/bin/sonar-scanner
+                /opt/sonar-scanner/bin/sonar-scanner --version
+
+
+                echo ""
+                echo "Docker:"
+                docker --version
+
+
+                echo ""
+                echo "Kubectl:"
+                kubectl version --client
+            '''
+        }
+
+
+        // ====================================================
+        // 03 - FLUTTER CLEAN
+        // ====================================================
+
+        stage('Flutter Clean') {
+
+            sh '''
+                set -e
+
+                echo "========================================"
+                echo "Flutter Clean"
+                echo "========================================"
+
+                /opt/flutter/bin/flutter clean
+            '''
+        }
+
+
+        // ====================================================
+        // 04 - FLUTTER PUB GET
+        // ====================================================
+
+        stage('Flutter Pub Get') {
+
+            sh '''
+                set -e
+
+                echo "========================================"
+                echo "Flutter Pub Get"
+                echo "========================================"
+
+                /opt/flutter/bin/flutter pub get
+            '''
+        }
+
+
+        // ====================================================
+        // 05 - FLUTTER ANALYZE
+        // ====================================================
+
+        stage('Flutter Analyze') {
+
+            sh '''
+                set -e
+
+                echo "========================================"
+                echo "Flutter Analyze"
+                echo "========================================"
+
+                /opt/flutter/bin/flutter analyze
+            '''
+        }
+
+
+        // ====================================================
+        // 06 - FLUTTER TEST
+        // ====================================================
+
+        stage('Flutter Test') {
+
+            sh '''
+                set -e
+
+                echo "========================================"
+                echo "Flutter Test"
+                echo "========================================"
+
+                /opt/flutter/bin/flutter test
+            '''
+        }
+
+
+        // ====================================================
+        // 07 - SONARQUBE ANALYSIS
+        // ====================================================
+
+        stage('SonarQube Analysis') {
+
+            withSonarQubeEnv('SonarQube') {
 
                 sh '''
                     set -e
 
                     echo "========================================"
-                    echo "Flutter Environment"
+                    echo "SonarQube Analysis"
                     echo "========================================"
 
-                    echo "Flutter Home:"
-                    echo "$FLUTTER_HOME"
+                    echo "SonarScanner:"
+                    /opt/sonar-scanner/bin/sonar-scanner --version
 
                     echo ""
 
-                    echo "Flutter Binary:"
-                    which flutter
-
-                    echo ""
-
-                    flutter --version
+                    /opt/sonar-scanner/bin/sonar-scanner \
+                        -Dsonar.projectKey=frontend-flutter \
+                        -Dsonar.projectName=frontend-flutter \
+                        -Dsonar.sources=lib \
+                        -Dsonar.tests=test \
+                        -Dsonar.sourceEncoding=UTF-8
                 '''
             }
+        }
 
 
-            // ====================================================
-            // 03 - FLUTTER PREPARE
-            // ====================================================
+        // ====================================================
+        // 08 - QUALITY GATE
+        // ====================================================
 
-            stage('Flutter Prepare') {
+        stage('Quality Gate') {
 
-                sh '''
-                    set -e
+            timeout(
+                time: 10,
+                unit: 'MINUTES'
+            ) {
 
-                    echo "========================================"
-                    echo "Flutter Clean"
-                    echo "========================================"
+                def result =
+                    waitForQualityGate(
+                        abortPipeline: true
+                    )
 
-                    flutter clean
 
-
-                    echo ""
-                    echo "========================================"
-                    echo "Flutter Pub Get"
-                    echo "========================================"
-
-                    flutter pub get
-                '''
-            }
-
-
-            // ====================================================
-            // 04 - FLUTTER ANALYZE
-            // ====================================================
-
-            stage('Flutter Analyze') {
-
-                sh '''
-                    set -e
-
-                    echo "========================================"
-                    echo "Flutter Analyze"
-                    echo "========================================"
-
-                    flutter analyze
-                '''
-            }
-
-
-            // ====================================================
-            // 05 - FLUTTER TEST
-            // ====================================================
-
-            stage('Flutter Test') {
-
-                sh '''
-                    set -e
-
-                    echo "========================================"
-                    echo "Flutter Test"
-                    echo "========================================"
-
-                    flutter test
-                '''
-            }
-
-
-            // ====================================================
-            // 06 - SONARSCANNER CHECK
-            // ====================================================
-
-            stage('SonarScanner Check') {
-
-                sh '''
-                    set -e
-
-                    echo "========================================"
-                    echo "SonarScanner"
-                    echo "========================================"
-
-                    echo "SonarScanner Home:"
-                    echo "$SONAR_SCANNER_HOME"
-
-                    echo ""
-
-                    echo "SonarScanner Binary:"
-                    which sonar-scanner
-
-                    echo ""
-
-                    sonar-scanner --version
-                '''
-            }
-
-
-            // ====================================================
-            // 07 - SONARQUBE ANALYSIS
-            // ====================================================
-
-            stage('SonarQube Analysis') {
-
-                withSonarQubeEnv('SonarQube') {
-
-                    withEnv([
-
-                        "SONAR_PROJECT_KEY=${sonarProjectKey}",
-
-                        "SONAR_PROJECT_NAME=${sonarProjectName}"
-
-                    ]) {
-
-                        sh '''
-                            set -e
-
-                            echo "========================================"
-                            echo "SonarQube Analysis"
-                            echo "========================================"
-
-                            sonar-scanner \
-                                -Dsonar.projectKey="$SONAR_PROJECT_KEY" \
-                                -Dsonar.projectName="$SONAR_PROJECT_NAME" \
-                                -Dsonar.sources=lib \
-                                -Dsonar.tests=test \
-                                -Dsonar.sourceEncoding=UTF-8
-                        '''
-                    }
-                }
-            }
-
-
-            // ====================================================
-            // 08 - QUALITY GATE
-            // ====================================================
-
-            stage('Quality Gate') {
-
-                timeout(
-
-                    time: 10,
-
-                    unit: 'MINUTES'
-
-                ) {
-
-                    def result =
-                        waitForQualityGate(
-                            abortPipeline: true
-                        )
-
-
-                    if (result.status != 'OK') {
-
-                        error(
-                            "SonarQube Quality Gate FAILED: ${result.status}"
-                        )
-                    }
-
-
-                    echo "========================================"
-
-                    echo "SonarQube Quality Gate: PASSED"
-
-                    echo "========================================"
-                }
-            }
-
-
-            // ====================================================
-            // 09 - VERSION
-            // ====================================================
-
-            stage('Version') {
-
-                def version = sh(
-
-                    script: '''
-                        grep '^version:' pubspec.yaml |
-                        head -1 |
-                        awk '{print $2}'
-                    ''',
-
-                    returnStdout: true
-
-                ).trim()
-
-
-                if (!version) {
+                if (result.status != 'OK') {
 
                     error(
-                        'Version tidak ditemukan di pubspec.yaml'
+                        "SonarQube Quality Gate FAILED: ${result.status}"
                     )
                 }
 
 
-                /*
-                 * Example:
-                 *
-                 * version: 1.0.0+5
-                 *
-                 * Docker:
-                 *
-                 * 1.0.0-build-25
-                 */
-
-                def baseVersion =
-                    version.split('\\+')[0]
+                echo "========================================"
+                echo "SonarQube Quality Gate PASSED"
+                echo "========================================"
+            }
+        }
 
 
-                dockerImage =
-                    "${dockerImageName}:${baseVersion}-build-${env.BUILD_NUMBER}"
+        // ====================================================
+        // 09 - VERSION
+        // ====================================================
 
+        stage('Version') {
+
+            def version = sh(
+
+                script: '''
+                    grep '^version:' pubspec.yaml |
+                    head -1 |
+                    awk '{print $2}'
+                ''',
+
+                returnStdout: true
+
+            ).trim()
+
+
+            if (!version) {
+
+                error(
+                    'Version tidak ditemukan di pubspec.yaml'
+                )
+            }
+
+
+            /*
+             * Example:
+             *
+             * version: 1.0.0+5
+             *
+             * Docker:
+             *
+             * 1.0.0-build-25
+             */
+
+            def baseVersion =
+                version.split('\\+')[0]
+
+
+            dockerImage =
+                "${dockerImageName}:${baseVersion}-build-${env.BUILD_NUMBER}"
+
+
+            echo "========================================"
+            echo "Application Version"
+            echo "========================================"
+
+            echo "Flutter Version : ${version}"
+
+            echo "Docker Image    : ${dockerImage}"
+        }
+
+
+        // ====================================================
+        // 10 - FLUTTER WEB BUILD
+        // ====================================================
+
+        stage('Flutter Web Build') {
+
+            sh '''
+                set -e
 
                 echo "========================================"
-
-                echo "Application Version"
-
+                echo "Flutter Web Build"
                 echo "========================================"
 
-                echo "Flutter Version : ${version}"
-
-                echo "Docker Image    : ${dockerImage}"
-            }
+                /opt/flutter/bin/flutter build web --release
 
 
-            // ====================================================
-            // 10 - FLUTTER WEB BUILD
-            // ====================================================
+                echo ""
 
-            stage('Flutter Web Build') {
+                echo "Build output:"
 
-                sh '''
-                    set -e
-
-                    echo "========================================"
-                    echo "Flutter Web Build"
-                    echo "========================================"
-
-                    flutter build web --release
+                ls -lah build/web
+            '''
+        }
 
 
-                    echo ""
+        // ====================================================
+        // 11 - DOCKER BUILD & PUSH
+        // ====================================================
 
-                    echo "Build output:"
+        stage('Docker Build & Push') {
 
-                    ls -lah build/web
-                '''
-            }
+            withCredentials([
 
+                usernamePassword(
 
-            // ====================================================
-            // 11 - DOCKER BUILD & PUSH
-            // ====================================================
+                    credentialsId:
+                        'nexus-credential',
 
-            stage('Docker Build & Push') {
+                    usernameVariable:
+                        'NEXUS_USERNAME',
 
-                withCredentials([
+                    passwordVariable:
+                        'NEXUS_PASSWORD'
+                )
 
-                    usernamePassword(
-
-                        credentialsId:
-                            'nexus-credential',
-
-                        usernameVariable:
-                            'NEXUS_USERNAME',
-
-                        passwordVariable:
-                            'NEXUS_PASSWORD'
-                    )
-                ]) {
-
-                    withEnv([
-
-                        "DOCKER_IMAGE=${dockerImage}",
-
-                        "DOCKER_REGISTRY=${nexusRegistry}"
-
-                    ]) {
-
-                        sh '''
-                            set -e
-
-                            echo "========================================"
-                            echo "Docker Login"
-                            echo "========================================"
-
-                            echo "$NEXUS_PASSWORD" |
-                                docker login "$DOCKER_REGISTRY" \
-                                --username "$NEXUS_USERNAME" \
-                                --password-stdin
-
-
-                            echo ""
-                            echo "========================================"
-                            echo "Docker Build"
-                            echo "========================================"
-
-                            docker build \
-                                --pull \
-                                -t "$DOCKER_IMAGE" \
-                                .
-
-
-                            echo ""
-                            echo "========================================"
-                            echo "Docker Push"
-                            echo "========================================"
-
-                            docker push "$DOCKER_IMAGE"
-
-
-                            echo ""
-
-                            echo "Image pushed:"
-
-                            echo "$DOCKER_IMAGE"
-                        '''
-                    }
-                }
-            }
-
-
-            // ====================================================
-            // 12 - DEPLOY K3S
-            // ====================================================
-
-            stage('Deploy K3s') {
-
-                deploymentStarted = true
-
+            ]) {
 
                 withEnv([
 
-                    "KUBECONFIG=${k3sKubeconfig}",
+                    "DOCKER_IMAGE=${dockerImage}",
 
-                    "NAMESPACE=${k3sNamespace}",
-
-                    "DEPLOYMENT=${k3sDeployment}",
-
-                    "CONTAINER=${k3sContainer}",
-
-                    "DOCKER_IMAGE=${dockerImage}"
+                    "DOCKER_REGISTRY=${nexusRegistry}"
 
                 ]) {
 
@@ -510,55 +411,230 @@ node('runner') {
                         set -e
 
                         echo "========================================"
-                        echo "K3s Deployment"
+                        echo "Docker Login"
                         echo "========================================"
 
-                        echo "Namespace : $NAMESPACE"
 
-                        echo "Deployment: $DEPLOYMENT"
-
-                        echo "Container : $CONTAINER"
-
-                        echo "Image     : $DOCKER_IMAGE"
+                        echo "$NEXUS_PASSWORD" |
+                            docker login "$DOCKER_REGISTRY" \
+                            --username "$NEXUS_USERNAME" \
+                            --password-stdin
 
 
                         echo ""
 
-                        echo "K3s Nodes:"
-
-                        kubectl get nodes -o wide
-
-
-                        echo ""
-
-                        echo "Updating deployment..."
+                        echo "========================================"
+                        echo "Docker Build"
+                        echo "========================================"
 
 
-                        kubectl set image \
-                            deployment/"$DEPLOYMENT" \
-                            "$CONTAINER=$DOCKER_IMAGE" \
-                            -n "$NAMESPACE"
+                        docker build \
+                            --pull \
+                            -t "$DOCKER_IMAGE" \
+                            .
 
 
                         echo ""
 
-                        echo "Waiting rollout..."
+                        echo "========================================"
+                        echo "Docker Push"
+                        echo "========================================"
 
 
-                        kubectl rollout status \
-                            deployment/"$DEPLOYMENT" \
-                            -n "$NAMESPACE" \
-                            --timeout=5m
+                        docker push "$DOCKER_IMAGE"
+
+
+                        echo ""
+
+                        echo "Image pushed:"
+
+                        echo "$DOCKER_IMAGE"
                     '''
                 }
             }
+        }
 
 
-            // ====================================================
-            // 13 - VERIFY
-            // ====================================================
+        // ====================================================
+        // 12 - DEPLOY K3S
+        // ====================================================
 
-            stage('Verify') {
+        stage('Deploy K3s') {
+
+            deploymentStarted = true
+
+
+            withEnv([
+
+                "KUBECONFIG=${k3sKubeconfig}",
+
+                "NAMESPACE=${k3sNamespace}",
+
+                "DEPLOYMENT=${k3sDeployment}",
+
+                "CONTAINER=${k3sContainer}",
+
+                "DOCKER_IMAGE=${dockerImage}"
+
+            ]) {
+
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "K3s Deployment"
+                    echo "========================================"
+
+
+                    echo "Namespace : $NAMESPACE"
+                    echo "Deployment: $DEPLOYMENT"
+                    echo "Container : $CONTAINER"
+                    echo "Image     : $DOCKER_IMAGE"
+
+
+                    echo ""
+
+                    echo "K3s Nodes:"
+
+                    kubectl get nodes -o wide
+
+
+                    echo ""
+
+                    echo "Updating deployment..."
+
+
+                    kubectl set image \
+                        deployment/"$DEPLOYMENT" \
+                        "$CONTAINER=$DOCKER_IMAGE" \
+                        -n "$NAMESPACE"
+
+
+                    echo ""
+
+                    echo "Waiting rollout..."
+
+
+                    kubectl rollout status \
+                        deployment/"$DEPLOYMENT" \
+                        -n "$NAMESPACE" \
+                        --timeout=5m
+                '''
+            }
+        }
+
+
+        // ====================================================
+        // 13 - VERIFY
+        // ====================================================
+
+        stage('Verify') {
+
+            withEnv([
+
+                "KUBECONFIG=${k3sKubeconfig}",
+
+                "NAMESPACE=${k3sNamespace}",
+
+                "DEPLOYMENT=${k3sDeployment}"
+
+            ]) {
+
+                sh '''
+                    set -e
+
+                    echo "========================================"
+                    echo "K3s Verification"
+                    echo "========================================"
+
+
+                    echo "Deployment:"
+
+                    kubectl get deployment \
+                        "$DEPLOYMENT" \
+                        -n "$NAMESPACE"
+
+
+                    echo ""
+
+                    echo "Pods:"
+
+                    kubectl get pods \
+                        -n "$NAMESPACE" \
+                        -o wide
+
+
+                    echo ""
+
+                    echo "Service:"
+
+                    kubectl get service \
+                        -n "$NAMESPACE"
+
+
+                    echo ""
+
+                    echo "Ingress:"
+
+                    kubectl get ingress \
+                        -n "$NAMESPACE" \
+                        || true
+                '''
+            }
+        }
+
+
+        // ====================================================
+        // SUCCESS
+        // ====================================================
+
+        echo """
+
+        ========================================
+        PIPELINE SUCCESS
+        ========================================
+
+        Application:
+        Flutter Web
+
+        Repository:
+        ${gitRepo}
+
+        Docker Image:
+        ${dockerImage}
+
+        Nexus:
+        ${nexusRegistry}
+
+        SonarQube:
+        ${sonarProjectName}
+
+        K3s Namespace:
+        ${k3sNamespace}
+
+        Deployment:
+        ${k3sDeployment}
+
+        Jenkins Build:
+        ${env.BUILD_NUMBER}
+
+        ========================================
+
+        """
+
+
+    } catch (Exception e) {
+
+        echo "PIPELINE FAILED: ${e}"
+
+
+        // ====================================================
+        // ROLLBACK
+        // ====================================================
+
+        if (deploymentStarted) {
+
+            try {
 
                 withEnv([
 
@@ -571,177 +647,70 @@ node('runner') {
                 ]) {
 
                     sh '''
-                        set -e
-
                         echo "========================================"
-                        echo "K3s Verification"
+                        echo "ROLLBACK"
                         echo "========================================"
 
 
-                        echo "Deployment:"
-
-                        kubectl get deployment \
-                            "$DEPLOYMENT" \
+                        kubectl rollout undo \
+                            deployment/"$DEPLOYMENT" \
                             -n "$NAMESPACE"
 
 
-                        echo ""
-
-                        echo "Pods:"
-
-                        kubectl get pods \
+                        kubectl rollout status \
+                            deployment/"$DEPLOYMENT" \
                             -n "$NAMESPACE" \
-                            -o wide
+                            --timeout=5m
 
 
-                        echo ""
-
-                        echo "Service:"
-
-                        kubectl get service \
-                            -n "$NAMESPACE"
-
-
-                        echo ""
-
-                        echo "Ingress:"
-
-                        kubectl get ingress \
-                            -n "$NAMESPACE" \
-                            || true
+                        echo "Rollback completed."
                     '''
                 }
+
+            } catch (Exception rollbackError) {
+
+                echo "Rollback FAILED: ${rollbackError}"
             }
+        }
 
 
-            // ====================================================
-            // SUCCESS
-            // ====================================================
-
-            echo """
-
-            ========================================
-            PIPELINE SUCCESS
-            ========================================
-
-            Application:
-            Flutter Web
-
-            Repository:
-            ${gitRepo}
-
-            Docker Image:
-            ${dockerImage}
-
-            Nexus:
-            ${nexusRegistry}
-
-            SonarQube:
-            ${sonarProjectName}
-
-            K3s Namespace:
-            ${k3sNamespace}
-
-            Deployment:
-            ${k3sDeployment}
-
-            Jenkins Build:
-            ${env.BUILD_NUMBER}
-
-            ========================================
-
-            """
+        throw e
 
 
-        } catch (Exception e) {
-
-            echo "PIPELINE FAILED: ${e}"
+    } finally {
 
 
-            // ====================================================
-            // ROLLBACK
-            // ====================================================
+        // ====================================================
+        // DOCKER CLEANUP
+        // ====================================================
 
-            if (deploymentStarted) {
-
-                try {
-
-                    withEnv([
-
-                        "KUBECONFIG=${k3sKubeconfig}",
-
-                        "NAMESPACE=${k3sNamespace}",
-
-                        "DEPLOYMENT=${k3sDeployment}"
-
-                    ]) {
-
-                        sh '''
-                            echo "========================================"
-                            echo "ROLLBACK"
-                            echo "========================================"
-
-
-                            kubectl rollout undo \
-                                deployment/"$DEPLOYMENT" \
-                                -n "$NAMESPACE"
-
-
-                            kubectl rollout status \
-                                deployment/"$DEPLOYMENT" \
-                                -n "$NAMESPACE" \
-                                --timeout=5m
-
-
-                            echo "Rollback completed."
-                        '''
-                    }
-
-                } catch (Exception rollbackError) {
-
-                    echo "Rollback FAILED: ${rollbackError}"
-                }
-            }
-
-
-            throw e
-
-
-        } finally {
-
-
-            // ====================================================
-            // DOCKER CLEANUP
-            // ====================================================
-
-            if (dockerImage) {
-
-                sh """
-
-                    docker image rm \
-                        '${dockerImage}' || true
-
-                """
-            }
-
-
-            // ====================================================
-            // NEXUS LOGOUT
-            // ====================================================
+        if (dockerImage) {
 
             sh """
 
-                docker logout \
-                    '${nexusRegistry}' || true
+                docker image rm \
+                    '${dockerImage}' || true
 
             """
-
-
-            // ====================================================
-            // WORKSPACE CLEANUP
-            // ====================================================
-
-            deleteDir()
         }
+
+
+        // ====================================================
+        // NEXUS LOGOUT
+        // ====================================================
+
+        sh """
+
+            docker logout \
+                '${nexusRegistry}' || true
+
+        """
+
+
+        // ====================================================
+        // WORKSPACE CLEANUP
+        // ====================================================
+
+        deleteDir()
     }
 }
