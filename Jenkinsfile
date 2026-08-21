@@ -66,8 +66,7 @@ def sonarHome   = '/opt/sonar-scanner'
 
 def nexusRegistry = '192.168.0.103:8082'
 
-def dockerImageName =
-    "${nexusRegistry}/docker-hosted/flutter-web"
+def dockerImageName = "${nexusRegistry}/flutter-web"
 
 
 // ============================================================
@@ -649,7 +648,7 @@ ${env.BUILD_NUMBER}
                                 -o /dev/null \
                                 -w "%{http_code}" \
                                 -u "$NEXUS_USERNAME:$NEXUS_PASSWORD" \
-                                "http://$DOCKER_REGISTRY/v2/docker-hosted/flutter-web/manifests/$IMAGE_TAG" \
+                                "http://$DOCKER_REGISTRY/v2/flutter-web/manifests/$IMAGE_TAG" \
                                 || true)
 
 
